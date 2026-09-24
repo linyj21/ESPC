@@ -178,7 +178,11 @@ const KLOE_PER_KWH = 860/9000000;
 const AC_TYPES = [0,1,5];
 
 /* ---------- 文字前處理 ---------- */
-function norm(s){ return s.normalize('NFKC').replace(/\u00a0/g,' ').replace(/[ \u3000]+/g,' '); }
+function norm(s){
+  s=s.normalize('NFKC').replace(/\u00a0/g,' ').replace(/[ \u3000]+/g,' ');
+  // PDF 常見「工 廠 登 記」字距：連續單字中文之間的空白移除
+  return s.replace(/(?:[\u4e00-\u9fff(:)] ){2,}[\u4e00-\u9fff(:)]/g, m=>m.replace(/ /g,''));
+}
 function htmlToLines(html){
   html = html.replace(/<img[^>]*>/g,'');
   html = html.replace(/<td[^>]*>([\s\S]*?)<\/td>/g,(m,c)=>'<td>'+c.replace(/<\/p>\s*<p[^>]*>/g,' ').replace(/<br\s*\/?>/g,' ').replace(/<\/?p[^>]*>/g,'')+'</td>');
@@ -202,7 +206,7 @@ function toNum(s){ if(s===null||s===undefined||s==='') return null; const n=Numb
 function nums(s){ return (s.match(NUM_RE)||[]).map(toNum); }
 function fmt(n){ return n===null||n===undefined||n==='' ? '' : Number(n).toLocaleString('zh-TW',{maximumFractionDigits:4}); }
 function splitAddress(a){
-  a=(a||'').replace(/\s+/g,'').replace(/^\([^)]*\)/,'');
+  a=(a||'').replace(/\s+/g,'').replace(/^\([^)]*\)/,'').replace(/^\d{3,6}(?=\D)/,'').replace(/^臺/,'臺');
   const m=a.match(/^(.{2}[縣市])(.{1,4}?[鄉鎮市區])(.+)$/);
   return m?[m[1],m[2],m[3]]:[a,'',''];
 }
@@ -245,7 +249,7 @@ function extract(lines, fileName){
 
   // 單位名稱
   let name='';
-  for(const l of sumLines){ const m=l.match(/^單位名稱\s*\t?\s*(.+)$/); if(m){ name=m[1].replace(/\t/g,' ').trim(); break; } }
+  for(const l of sumLines){ const m=l.match(/^單位名稱\s*\t?\s*(.+)$/); if(m){ name=m[1].replace(/\t/g,' ').replace(/^[:\s]+/,'').trim(); break; } }
   if(!name){ const m=all.match(/申請(?:機關|單位)名稱\s*:\s*([^\n\t]+)/); if(m) name=m[1].trim(); }
   set('單位名稱',name,'摘要表');
 
@@ -283,46 +287,68 @@ function extract(lines, fileName){
   else if(['教育服務業','醫療保健業','公共行政業'].includes(M['行業別小分類']))
     flag('info',`封面勾選「${M['行業別小分類']}」。若此單位屬學校、醫院或政府機關，請手動改為對應類別。`,'行業別類別');
 
-  // 負責人、聯絡人（摘要表內第 1、2 個「姓名」）
+  // 負責人、聯絡人
   const sumText = sumLines.join('\n');
-  const nameIdx=[]; sumLines.forEach((l,i)=>{ if(/姓名\s*:/.test(l)) nameIdx.push(i); });
-  const seg = (a,b)=>sumLines.slice(a, b).join('\n');
-  const pick=(t,re)=>{ const m=t.match(re); return m? m[1].trim():''; };
-  const email=(t)=>{
-    const m=t.match(/E-?mail\s*:?\s*([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\- ]*)/i); if(!m) return '';
-    let e=m[1].replace(/\s+/g,'');
-    if(/[-.]$/.test(e) || !/@.+\..+/.test(e)){ // PDF 斷行接續
-      const after=t.slice(m.index+m[0].length); const c=after.match(/([A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+)/);
-      if(c) e+=c[1];
-    }
-    return e.replace(/[.,;]+$/,'');
-  };
-  const PH='([0-9(][0-9()\\-## ]{5,}[0-9])';
-  const phone=(t,label)=>{ const m=t.match(new RegExp(label+'\\s*:[ \\t]*'+PH)); return m? m[1].replace(/\s+/g,''):''; };
-  if(nameIdx.length>=1){
-    const p=seg(nameIdx[0], nameIdx[1]!==undefined?nameIdx[1]:nameIdx[0]+8);
-    set('負責人',pick(p,/姓名\s*:[ \t]*([^\s\t]+)/),'摘要表');
-    set('負責人職稱',pick(p,/職稱\s*:[ \t]*([^\s\t]+)/),'摘要表');
-    set('負責人電話',phone(p,'(?:辦公)?電話'),'摘要表');
-    set('負責人Email',email(p),'摘要表');
+  const LABEL_RE=/(姓名|職稱|辦公電話|電話|傳真|手機|E-?mail|通訊地址)\s*:/gi;
+  const STOP_WORDS=/^(計畫|聯絡人|單位|負責人|計畫聯絡人|單位負責人)$/;
+  function parsePeople(segLines){
+    const out={}; const order=[];
+    segLines.forEach((l,li)=>{
+      const hits=[...l.matchAll(LABEL_RE)];
+      if(!hits.length){
+        // 分機獨立一行
+        if(/^#\d+$/.test(l.trim()) && out['電話'] && !out['電話'].v.includes('#')) out['電話'].v+=l.trim();
+        return;
+      }
+      hits.forEach((h,hi)=>{
+        let lab=h[1].replace(/^辦公/,''); if(/mail/i.test(lab)) lab='Email';
+        const end = hi+1<hits.length? hits[hi+1].index : l.length;
+        const v=l.slice(h.index+h[0].length,end).replace(/\t/g,' ').trim();
+        if(out[lab]) return; out[lab]={v,li}; order.push(lab);
+      });
+      // PDF 表格斷行：值以「-」結尾或 Email 空白時，由下一行的零散文字依序補上
+      const incomplete=hits.map(h=>{ let lab=h[1].replace(/^辦公/,''); if(/mail/i.test(lab)) lab='Email'; return lab; })
+        .filter(lab=>out[lab] && out[lab].li===li && (/-$/.test(out[lab].v) || (lab==='Email' && !/@.+\./.test(out[lab].v))));
+      LABEL_RE.lastIndex=0;
+      let nx=-1; for(let q=li+1;q<=li+2&&q<segLines.length;q++){ LABEL_RE.lastIndex=0; if(!LABEL_RE.test(segLines[q])){ nx=q; break; } }
+      LABEL_RE.lastIndex=0;
+      if(incomplete.length && nx>0){
+        const toks=segLines[nx].split(/[\t ]+/).filter(t=>t && !STOP_WORDS.test(t));
+        for(const lab of incomplete){
+          const idx = lab==='Email' ? toks.findIndex(t=>/@/.test(t)||/^[A-Za-z0-9.\-]+\.[a-z]{2,}$/i.test(t)) : toks.findIndex(t=>/^[\d#()\-]+$/.test(t));
+          if(idx>=0){ out[lab].v+=toks[idx]; toks.splice(idx,1); }
+        }
+      }
+      LABEL_RE.lastIndex=0;
+    });
+    const g=k=>out[k]? out[k].v : '';
+    const clean=s=>s.replace(/\s+/g,'');
+    const firstWord=s=>(s.split(/\s+/)[0]||'');
+    const phoneOnly=s=>{ const m=clean(s).match(/[0-9(][0-9()\-#]{5,}/); return m? m[0].replace(/-+$/,''):''; };
+    let email=clean(g('Email')); const em=email.match(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/); email=em?em[0]:'';
+    return {name:firstWord(g('姓名')), title:firstWord(g('職稱')), tel:phoneOnly(g('電話')), fax:phoneOnly(g('傳真')), mobile:phoneOnly(g('手機')), email, addr:g('通訊地址')};
   }
-  if(nameIdx.length>=2){
-    const endI = sumLines.findIndex((l,i)=>i>nameIdx[1] && /^備\s*註/.test(l));
-    const c=seg(nameIdx[1], endI>0?endI:nameIdx[1]+8);
-    set('聯絡人',pick(c,/姓名\s*:[ \t]*([^\s\t]+)/),'摘要表');
-    set('聯絡人職稱',pick(c,/職稱\s*:[ \t]*([^\s\t]+)/),'摘要表');
-    set('聯絡人電話',phone(c,'電話'),'摘要表');
-    set('聯絡人手機',phone(c,'手機'),'摘要表');
-    set('聯絡人傳真',phone(c,'傳真'),'摘要表');
-    set('聯絡人Email',email(c),'摘要表');
-    const ad=pick(c,/通訊地址\s*:\s*([^\n\t]+)/);
-    if(ad){ const [x,y,z]=splitAddress(ad); set('聯絡人地址縣市',x,'摘要表'); set('聯絡人地址鄉鎮區',y,'摘要表'); set('聯絡人地址街道路號',z,'摘要表'); }
+  // 負責人：單位名稱之後到「申請經費／預定期程」；聯絡人：承諾節能率之後到「備註」
+  const iName=sumLines.findIndex(l=>/^單位名稱/.test(l));
+  const iFund=sumLines.findIndex((l,i)=>i>iName && /申請經費|預定期程|經\s*費/.test(l));
+  const iRate=sumLines.findIndex(l=>/承諾之?節能率/.test(l));
+  const iNote=sumLines.findIndex((l,i)=>i>Math.max(iRate,0) && /^備\s*註/.test(l));
+  const nameIdx=[]; sumLines.forEach((l,i)=>{ if(/姓名\s*:/.test(l)) nameIdx.push(i); });
+  let bossSeg = (iName>=0 && iFund>iName)? sumLines.slice(iName+1,iFund) : [];
+  if(!bossSeg.some(l=>/姓名\s*:/.test(l)) && nameIdx.length) bossSeg=sumLines.slice(nameIdx[0], nameIdx[1]!==undefined?nameIdx[1]:nameIdx[0]+6);
+  let ctSeg = (iRate>=0)? sumLines.slice(iRate+1, iNote>iRate?iNote:iRate+10) : [];
+  if(!ctSeg.some(l=>/姓名\s*:/.test(l)) && nameIdx.length>1) ctSeg=sumLines.slice(nameIdx[1], iNote>nameIdx[1]?iNote:nameIdx[1]+8);
+  if(bossSeg.length){ const b=parsePeople(bossSeg);
+    set('負責人',b.name,'摘要表'); set('負責人職稱',b.title,'摘要表'); set('負責人電話',b.tel,'摘要表'); set('負責人Email',b.email,'摘要表'); }
+  if(!M['負責人Email']) flag('warn','摘要表中找不到負責人 Email。','負責人Email');
+  if(ctSeg.length){ const c=parsePeople(ctSeg);
+    set('聯絡人',c.name,'摘要表'); set('聯絡人職稱',c.title,'摘要表'); set('聯絡人電話',c.tel,'摘要表'); set('聯絡人手機',c.mobile,'摘要表'); set('聯絡人傳真',c.fax,'摘要表'); set('聯絡人Email',c.email,'摘要表');
+    if(c.addr){ const [x,y,z]=splitAddress(c.addr); set('聯絡人地址縣市',x,'摘要表'); set('聯絡人地址鄉鎮區',y,'摘要表'); set('聯絡人地址街道路號',z,'摘要表'); }
   } else flag('warn','摘要表中找不到計畫聯絡人資料。','聯絡人');
-  const e1=M['負責人Email'], e2=M['聯絡人Email'];
-  if(e1 && e2 && e1!==e2 && e1.split('@')[0]===e2.split('@')[0]) flag('warn',`負責人與聯絡人 Email 帳號相同但網域不同（${e1} / ${e2}），請確認是否為筆誤。`,'聯絡人Email');
+  if(ctSeg.length && !M['聯絡人Email']) flag('warn','摘要表中找不到聯絡人 Email。','聯絡人Email');
 
   // 承諾節能率
-  const rate = sumText.replace(/\s+/g,'').match(/承諾之?節能率[^\d]*([\d.]+)%/);
+  const rate = sumText.replace(/\s+/g,'').match(/承諾之?節能率[^\d]*([\d.]+)\[?%/);
   if(rate) set('承諾節能率(%)',toNum(rate[1]),'摘要表');
 
   // 分期補助款
@@ -339,63 +365,96 @@ function extract(lines, fileName){
 
   // 製造業才有：工業區、園區、工廠登記
   if(M['行業別類別']==='製造業'){
-    const f=all.match(/工廠登記(?:證)?(?:號碼|編號|證號|號)?\s*:?\s*([A-Za-z0-9\-]{6,})/);
-    if(f) set('工廠登記證號',f[1],'計畫書');
-    const z=flat.match(/([^\s,、()「」]{2,12}(?:工業區|科學園區|加工出口區|科技產業園區))/);
-    if(z){ set('是否位於工業區','是','計畫書'); set('園區',z[1],'計畫書'); flag('info','偵測到園區名稱，請確認「園區類型」。','園區類型'); }
+    const f=all.match(/工廠登記(?:證)?(?:號碼|編號|證號|號)?\s*:\s*([^\n]+)/) || all.match(/工廠登記(?:證)?(?:號碼|編號|證號|號)?\s*([A-Za-z0-9\-]{6,})/);
+    if(f){ const v=f[1].replace(/\s*\/\s*/g,'/').replace(/\s+/g,' ').trim(); if(/\d{6,}/.test(v)) set('工廠登記證號',v,'封面'); }
+    const zl=all.match(/(?:^|\n)\s*(?:所在)?(?:工業區|園區)\s*:\s*([^\n]+)/);
+    const z = zl? zl[1].replace(/\s*\/\s*/g,'/').trim() : ((flat.match(/([^\s,、()「」:]{2,12}(?:工業區|科學園區|加工出口區|科技產業園區))/)||[])[1]);
+    if(z){ set('是否位於工業區','是','計畫書'); set('園區',z,zl?'封面':'計畫書'); flag('info','偵測到園區名稱，請確認「園區類型」。','園區類型'); }
   }
 
-  // 第壹章：總用電度、總電費（多場址加總）
+  // 第壹章：總用電度、總電費（多場址加總；若文中已有合計則採合計）
   const iCh2 = findLastIdx(lines,/^第\s*貳\s*章/);
   const ch1 = lines.slice(0, iCh2>0?iCh2:lines.length).join(' ');
-  const kwh=[...new Set([...ch1.matchAll(/全年(?:度)?用電(?:度數|量)?\s*[:為]?\s*([\d,]{4,})\s*kWh/gi)].map(m=>toNum(m[1])))];
-  const fee=[...new Set([...ch1.matchAll(/總電費\s*[:為]?\s*([\d,]{4,})\s*元/g)].map(m=>toNum(m[1])))];
-  if(kwh.length){ set('總用電度(度/年)',kwh.reduce((a,b)=>a+b,0),'第壹章'); if(kwh.length>1) flag('info',`總用電度為 ${kwh.length} 個場址加總：${kwh.map(fmt).join(' + ')}`,'總用電度(度/年)'); }
+  const dedupTotal=a=>{ const t=a.find(x=>Math.abs(a.filter(y=>y!==x).reduce((s,y)=>s+y,0)-x)<=1); return (t!==undefined && a.length>2)? [t] : a; };
+  const kwhAll=[...new Set([...ch1.matchAll(/(?:全年(?:度)?(?:總)?用電(?:度數|量)?|共使用)\s*[:為]?\s*([\d,]{4,})\s*kWh/gi)].map(m=>toNum(m[1])))];
+  const feeAll=[...new Set([...ch1.matchAll(/總電費\s*[:為]?\s*([\d,]{4,})\s*元/g)].map(m=>toNum(m[1])))];
+  const kwh=dedupTotal(kwhAll), fee=dedupTotal(feeAll);
+  if(kwh.length){ set('總用電度(度/年)',kwh.reduce((a,b)=>a+b,0),'第壹章'); if(kwh.length>1) flag('info',`總用電度為 ${kwh.length} 個場址加總：${kwh.map(fmt).join(' + ')}`,'總用電度(度/年)'); else if(kwhAll.length>1) flag('info','總用電度採第壹章所列各場址合計值。','總用電度(度/年)'); }
   else flag('warn','第壹章找不到全年用電度數。','總用電度(度/年)');
   if(fee.length){ set('總電費(元/年)',fee.reduce((a,b)=>a+b,0),'第壹章'); if(fee.length>1) flag('info',`總電費為 ${fee.length} 個場址加總：${fee.map(fmt).join(' + ')}`,'總電費(元/年)'); }
 
-  // 能源使用狀況表
-  const iPre = findIdx(lines,/^1\s*、\s*改善前耗[能電](?!金額)/);
-  let sites=[], energy={};
-  if(iPre>=0){
-    const iHead = (()=>{ for(let i=iPre;i>=Math.max(0,iPre-12);i--) if(/^改善地點/.test(lines[i])) return i; return -1; })();
-    if(iHead>=0){
-      const h=lines[iHead].replace(/^改善地點\s*/,'');
-      sites=(h.includes('\t')? cells(h) : h.split(/\s+/)).filter(s=>s && !/^合\s*計$/.test(s));
+  // 能源使用狀況表（依數值關係辨識各列，不依賴列標題格式）
+  const isNumTok=t=>/^-?[\d,]*\d(?:\.\d+)?%?$/.test(t);
+  function trail(l){ const toks=l.split(/[\t ]+/).filter(Boolean); let k=toks.length; while(k>0 && isNumTok(toks[k-1])) k--;
+    const nt=toks.slice(k); return {label:toks.slice(0,k).join(' '), vals:nt.map(x=>toNum(x.replace('%',''))), pct:nt.length>0 && nt.every(x=>x.endsWith('%'))}; }
+  const near=(a,b,tol)=> Math.abs(a-b) <= Math.max(tol.abs||0, Math.abs(b)*(tol.rel||0));
+  const rowsNear=(A,B,f,tol)=> A.length===B.length && A.every((x,i)=> B[i]===0 && x===0 || near(x, f(B[i],i), tol));
+  let energy=null;
+  (function(){
+    const heads=[]; lines.forEach((l,i)=>{ if(/^表\s*\S{0,8}.{0,50}能源使用狀況/.test(l.replace(/\s+/g,''))||/^表.{0,60}能源使用狀況/.test(l)) heads.push(i); });
+    const iPre0=findIdx(lines,/^1\s*、\s*改善前(耗[能電]|用電)(?!金額)/); if(iPre0>=0) heads.push(Math.max(0,iPre0-12));
+    for(const h of heads){
+      const rows=[]; let acc=[]; const region=[];
+      for(let i=h+1;i<Math.min(lines.length,h+90);i++){
+        const l=lines[i];
+        if(rows.length>=3 && (/^(備註|註)\s*[:\d]/.test(l) || /^表\s*\S/.test(l))) break;
+        const t=trail(l); region.push({l,t});
+        if(t.vals.length>=2){ rows.push({...t, idx:i, pre:acc.join(' ')}); acc=[]; }
+        else { acc.push(l); if(rows.length) rows[rows.length-1].post=(rows[rows.length-1].post||'')+' '+l; }
+      }
+      if(rows.length<4) continue;
+      const cnt={}; rows.forEach(r=>cnt[r.vals.length]=(cnt[r.vals.length]||0)+1);
+      const NT=+Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0];
+      const hdr=[]; for(const x of region){ if(x.t.vals.length===NT) break; if(x.t.vals.length<2) hdr.push(x.l); }
+      const R=rows.filter(r=>r.vals.length===NT);
+      const V=R.filter(r=>!r.pct);
+      // 找「前 − 後 = 節約」的三列組合
+      const triples=[];
+      for(let i=0;i<V.length;i++) for(let j=i+1;j<V.length;j++) for(let k=j+1;k<V.length;k++){
+        const a=V[i].vals,b=V[j].vals,c=V[k].vals;
+        if(a.every((x,q)=>near(x-b[q],c[q],{abs:1.5,rel:0.002})) && a.some(x=>x>=100)) triples.push([V[i],V[j],V[k]]); }
+      const kloeOf=(row)=>V.find(r=>r!==row && rowsNear(r.vals,row.vals,(x)=>x*KLOE_PER_KWH,{abs:0.06,rel:0.03}));
+      let kT=triples.find(t=>kloeOf(t[0])&&kloeOf(t[1]));
+      if(!kT) continue;
+      const mT=triples.find(t=>t!==kT && t[0].vals.every((x,q)=>kT[0].vals[q]===0 || (x/kT[0].vals[q]>1.5 && x/kT[0].vals[q]<9)));
+      const co2=V.find(r=>/co2\s*減量/i.test(r.label+' '+r.pre)) || V.find(r=>r!==kT[2] && rowsNear(r.vals,kT[2].vals,x=>x*0.474/1000,{abs:0.2,rel:0.1}));
+      const pcts=R.filter(r=>r.pct); const rateRow=pcts.find(r=>/耗能基準/.test(r.label+' '+r.pre+' '+(r.post||'')))||pcts[pcts.length-1];
+      const total = NT>=2 && Math.abs(kT[0].vals.slice(0,-1).reduce((a,b)=>a+b,0)-kT[0].vals[NT-1])<=Math.max(1,kT[0].vals[NT-1]*0.001);
+      const N = total? NT-1 : NT;
+      const cut=a=>a? a.slice(0,N):null, last=a=>a? a[a.length-1]:null;
+      // 表頭：場址與各欄說明
+      const GENERIC=/^(改善地點|設備能源耗用(位置)?|合計|能源單價|\(元\/kWh\)|\(元\/kwh\))$/i;
+      let siteToks=[]; const colText=Array(N).fill('');
+      let expectSites=false;
+      hdr.forEach(l=>{
+        if(/單價/.test(l)) return;
+        let t=l.includes('\t')? cells(l) : l.split(' ');
+        if(/^改善地點/.test(t[0])){ t=t.slice(1); if(!t.length){ expectSites=true; return; } }
+        t=t.map(x=>x.trim()).filter(x=>x && !GENERIC.test(x));
+        if(!t.length) return;
+        if(t.length===1 && N>1 && t[0]===name) return;
+        if(expectSites || (/^改善地點/.test(l))){ siteToks=t; expectSites=false; return; }
+        if(t.length===N) t.forEach((x,q)=>colText[q]+=x);
+        else if(N===1) colText[0]+=(colText[0]?' ':'')+t.join(' ');
+      });
+      if(!siteToks.length){ const sl=hdr.find(l=>/^改善地點/.test(l)); if(sl) siteToks=(sl.includes('\t')?cells(sl):sl.split(' ')).slice(1).filter(x=>x&&!GENERIC.test(x)); }
+      energy={N,total, R:{pre:cut(kT[0].vals),post:cut(kT[1].vals),sav:cut(kT[2].vals),preK:cut(kloeOf(kT[0]).vals),postK:cut(kloeOf(kT[1]).vals),
+        savK:(kloeOf(kT[2])||{}).vals||null, savF:mT?mT[2].vals:null, co2:co2?co2.vals:null, rate:rateRow?rateRow.vals:null},
+        siteToks, colText, prio:colText.map(t=>/非優先/.test(t)?'非優先':'優先'), head:h};
+      energy.last={sav:last(kT[2].vals), savK:last(energy.R.savK), savF:last(energy.R.savF), co2:last(energy.R.co2), rate:last(energy.R.rate)};
+      break;
     }
-    const typeLines = lines.slice(iHead>=0?iHead+1:iPre, iPre).filter(l=>!/能源單價/.test(l));
-    let typeCells=[];
-    const tl = typeLines.find(l=>/^設備能源耗用/.test(l) && l.includes('\t'));
-    if(tl) typeCells=cells(tl).slice(1);
-    const typeJoin = typeLines.join(' ');
-    const rowVals=(re)=>{ const i=findIdx(lines,re,iPre-1,iPre+20); if(i<0) return null; const rest=lines[i].replace(/^.*?\)/,''); return nums(rest); };
-    const R={ pre:rowVals(/^1\s*、\s*改善前耗[能電](?!金額)/), preK:rowVals(/^2\s*、\s*改善前油當量/),
-      post:rowVals(/^1\s*、\s*改善後耗[能電](?!金額)/), postK:rowVals(/^2\s*、\s*改善後油當量/),
-      sav:rowVals(/^1\s*、\s*節約耗[能電](?!金額)/), savK:rowVals(/^2\s*、\s*節約油當量/),
-      savF:rowVals(/^3\s*、\s*節約耗[能電]?金額/), co2:rowVals(/^4\s*、\s*Co2\s*減量/i), rateE:rowVals(/^6\s*、\s*節能率/)};
-    // 判斷最後一欄是否為合計
-    const hasTotal = (arr)=> arr && arr.length>=2 && Math.abs(arr.slice(0,-1).reduce((a,b)=>a+b,0)-arr[arr.length-1]) <= Math.max(1,Math.abs(arr[arr.length-1])*0.001);
-    const total = hasTotal(R.pre);
-    const nSite = R.pre ? (total? R.pre.length-1 : R.pre.length) : 0;
-    while(sites.length<nSite) sites.push(name||('場址'+(sites.length+1)));
-    sites=sites.slice(0,nSite);
-    const last=(a)=> a&&a.length? a[a.length-1]:null;
-    energy={R,total,sites};
-    set('節約用電量(kWh/年)', last(R.sav),'能源使用狀況表');
-    set('節省油當量(kLOE/年)', last(R.savK),'能源使用狀況表');
-    set('tCO2減量(噸/年)', last(R.co2),'能源使用狀況表');
-    set('節約金額(元/年)', last(R.savF),'能源使用狀況表');
-    const rE=last(R.rateE);
+  })();
+  if(energy){
+    set('節約用電量(kWh/年)', energy.last.sav,'能源使用狀況表');
+    set('節省油當量(kLOE/年)', energy.last.savK,'能源使用狀況表');
+    set('tCO2減量(噸/年)', energy.last.co2,'能源使用狀況表');
+    set('節約金額(元/年)', energy.last.savF,'能源使用狀況表');
+    const rE=energy.last.rate;
     if(rE!==null && M['承諾節能率(%)']!=='' && Math.abs(rE-M['承諾節能率(%)'])>0.05) flag('warn',`摘要表承諾節能率 ${M['承諾節能率(%)']}% 與能源使用狀況表 ${rE}% 不一致。`,'承諾節能率(%)');
-    // 各場址類型
-    energy.types = sites.map((s,i)=>{
-      let t = typeCells[i]!==undefined? classifyType(typeCells[i]) : -1;
-      if(t<0) t=classifyType(typeJoin);
-      return t;
-    });
-    energy.prioLabel = sites.map((s,i)=> /非優先/.test(typeCells[i]||'') ? '非優先' : '優先');
-  } else flag('warn','找不到能源使用狀況表（改善前耗電／耗能列），節能效益與項目數值需手動填寫。');
-
+    if(energy.last.co2===null) flag('warn','能源使用狀況表中找不到 CO2 減量，請手動填寫。','tCO2減量(噸/年)');
+    if(energy.last.savF===null) flag('warn','能源使用狀況表中找不到節約金額，請手動填寫。','節約金額(元/年)');
+  } else flag('warn','找不到能源使用狀況表，節能效益與項目數值需手動填寫。');
   // 效益表交叉檢查（原則：以能源使用狀況表為準）
   const iBen = findIdx(lines,/效益表/);
   if(iBen>=0){
@@ -403,8 +462,8 @@ function extract(lines, fileName){
     if(iTot>=0){
       const v=nums(lines[iTot]);
       const chk=[['節約用電量(kWh/年)','節約用電量'],['節約金額(元/年)','節約金額'],['節省油當量(kLOE/年)','節省油當量'],['tCO2減量(噸/年)','CO2 減量']];
-      for(const [k,lab] of chk){ const x=M[k]; if(x==='') continue; if(!v.some(n=>Math.abs(n-x)<=Math.max(0.051,Math.abs(x)*0.0005)))
-        flag('warn',`效益表合計列未出現${lab} ${fmt(x)}（效益表數值：${v.map(fmt).join('、')}），已採用能源使用狀況表數值。`,k); }
+      const miss=[]; for(const [k,lab] of chk){ const x=M[k]; if(x==='') continue; if(!v.some(n=>Math.abs(n-x)<=Math.max(0.051,Math.abs(x)*0.0005))) miss.push(`${lab} ${fmt(x)}`); }
+      if(miss.length) flag('warn',`效益表合計列與能源使用狀況表不一致：效益表未出現 ${miss.join('、')}（效益表合計列數值：${v.map(fmt).join('、')}）。已採用能源使用狀況表數值。`);
     }
   }
 
@@ -429,43 +488,110 @@ function extract(lines, fileName){
     const exp = k==='p'?(smeYes?40:30):(smeYes?30:20);
     if(budget[k].pct!==undefined && budget[k].pct!==exp) flag('warn',`中小企業勾選為「${M['中小企業']}」，${k==='p'?'優先':'非優先'}項目應以 ${exp}% 計算，但計畫書採用 ${budget[k].pct}%。`,'中小企業');
   }
-  const cap = all.match(/上限[^\d\n]{0,15}([\d,]{6,})/);
-  const capVal = cap? toNum(cap[1]) : null;
+  const capM = all.match(/上限\s*[^\d\n]{0,15}([\d,.]+)\s*(萬)?/);
+  const capVal = capM? Math.round(toNum(capM[1])*(capM[2]?10000:1)) : null;
 
-  // 執行概要表：找非優先項目
-  const np=[]; const summaryPrio=new Set(), summaryNP=new Set();
+  // 執行概要表：依出現順序取得（場址, 優先/非優先）
+  const exeSeq=[]; const np=[]; const summaryPrio=new Set(), summaryNP=new Set();
   const iExe = findIdx(lines,/執行概要/, iCh2>0?iCh2:0);
+  const siteSet = energy? energy.siteToks : [];
   if(iExe>=0){
     let cur=''; let hdrN=0;
-    for(let i=iExe+1;i<Math.min(lines.length,iExe+40);i++){
-      const l=lines[i]; if(/^表\s*[\(\d]/.test(l) || /效益表|預估績效/.test(l)) break;
-      if(!l.includes('\t')) continue; const c=cells(l);
-      if(!hdrN){ hdrN=c.length; continue; }
-      let site, measure, rest;
-      if(c.length>=hdrN){ site=c[0]||cur; measure=c[1]; rest=c.slice(2); cur=site; }
-      else { site=cur; measure=c[0]; rest=c.slice(1); }
-      if(/非優先/.test(measure)){ summaryNP.add(site); np.push({site, measure:measure.replace(/\s*\(非優先補助項目\)|\s*\(非優先項目\)/,'').trim(), after:rest[rest.length-1]||''}); }
-      else if(/優先/.test(measure)) summaryPrio.add(site);
+    for(let i=iExe+1;i<Math.min(lines.length,iExe+80);i++){
+      const l=lines[i]; if(/效益表|預估.{0,10}節能率/.test(l) || (/^表\s*[\(\d]/.test(l) && i>iExe+1)) break;
+      const re=/(非)?優先(?:示範|補助)?項目/g; let m;
+      while((m=re.exec(l))){
+        const find=s=>siteSet.find(x=>s.includes(x));
+        let site=find(l.slice(0,m.index+m[0].length)) || find(l) || find(lines[i+1]||'') || find(lines[i+2]||'') || (l.includes('\t')&&cells(l)[0]&&!/優先/.test(cells(l)[0])?cells(l)[0]:'') || cur;
+        cur=site; exeSeq.push({site, prio:m[1]?'非優先':'優先'});
+      }
+      // Word 表格：擷取非優先列的改善措施（改善地點欄合併儲存格時沿用上一列）
+      if(l.includes('\t')){
+        const c=cells(l);
+        if(!hdrN){ if(/改善措施/.test(l)) hdrN=c.length; continue; }
+        let site, measure, rest;
+        if(c.length>=hdrN){ site=c[0]||cur; measure=c[1]; rest=c.slice(2); } else { site=cur; measure=c[0]; rest=c.slice(1); }
+        if(/非優先/.test(measure)){ summaryNP.add(site); np.push({site, measure:measure.replace(/\s*\(非優先(補助)?項目\)/,'').trim(), after:rest[rest.length-1]||''}); }
+        else if(/優先/.test(measure)) summaryPrio.add(site);
+      }
+    }
+  }
+  // 第貳章優先項目段落（判斷類型的備援）
+  const iPS=findIdx(lines,/^\(?\d?\)?\s*優先(示範|補助)項目/, iCh2>0?iCh2:0);
+  const iPE=iPS>=0? findIdx(lines,/非優先(示範|補助)?項目/, iPS+1) : -1;
+  const prioSectionType = iPS>=0? classifyType(lines.slice(iPS, iPE>iPS?iPE:iPS+40).join('')) : -1;
+
+  // 第貳章各場址的改善說明句（例：(A)將既有…汰換為…），作為非優先「改善措施」
+  const descMap={};
+  if(siteSet.length && iCh2>0){
+    let cs='', cp='';
+    for(let i=iCh2;i<Math.min(lines.length,(iExe>0?iExe:lines.length));i++){
+      const l=lines[i];
+      if(/^(\d+\s*[.、]|[一二三四五六七八九十]+、)/.test(l)){ const st=siteSet.find(x=>l.includes(x)); if(st){ cs=st; cp=''; } }
+      const pm=l.match(/(非)?優先(?:示範|補助)?項目/); if(pm && l.length<40) cp=pm[1]?'非優先':'優先';
+      if(cs && cp && l.length<30 && /:$/.test(l) && !/項目|如下|計算|說明/.test(l) && !descMap['alt|'+cs+'|'+cp]) descMap['alt|'+cs+'|'+cp]=l.replace(/:$/,'');
+      const dm=l.match(/^\(?[A-Za-z]\)\s*((?:將|汰換|更新|增設|新設).*)$/);
+      if(dm && cs && cp && !descMap[cs+'|'+cp]){
+        let t=dm[1]; for(let q=i+1;q<i+4 && !/[,。]/.test(t);q++) t+=lines[q];
+        const cut=t.search(/[,。]/); descMap[cs+'|'+cp]=(cut>10?t.slice(0,cut):t).replace(/\s+/g,' ').trim();
+      }
     }
   }
 
-  // 組優先項目
-  const P=[];
-  if(energy.sites){
+  // 各欄對應場址
+  const P=[], N=[];
+  if(energy){
+    let sites=energy.siteToks.slice();
+    if(sites.length!==energy.N){
+      if(exeSeq.length===energy.N && exeSeq.every((x,q)=>x.prio===energy.prio[q])) sites=exeSeq.map(x=>x.site);
+      else { sites=Array.from({length:energy.N},(_,q)=>energy.siteToks[q]||name||('項目'+(q+1)));
+        if(energy.N>1) flag('warn','能源使用狀況表的欄位無法完整對應到場址，請確認各列「改善地點」。'); }
+    }
+    energy.sites=sites;
     const R=energy.R;
-    energy.sites.forEach((s,i)=>{
-      if(energy.prioLabel[i]==='非優先') return;
-      const it={}; COLS['優先項目'].forEach(c=>it[c]='');
-      it['申請用戶']=name; it['優先/非優先']='優先'; it['改善地點']=s;
-      it['改善前耗電量(度)']=R.pre?R.pre[i]:''; it['改善前耗電量(kLOE)']=R.preK?R.preK[i]:''; it['改善前耗能量(kLOE)']=0;
-      it['改善後耗電量(度)']=R.post?R.post[i]:''; it['改善後耗電量(kLOE)']=R.postK?R.postK[i]:''; it['改善後耗能量(kLOE)']=0;
-      it['改善系統套數']=1;
-      const t=energy.types[i]; it['優先項目類型']= t>=0? PRIORITY_TYPES[t] : '';
-      if(AC_TYPES.includes(t)) it['是否有含區域泵']= /區域(水)?泵/.test(all)?'是':(/一次側/.test(all)?'否':'');
+    for(let q=0;q<energy.N;q++){
+      const isNP = energy.prio[q]==='非優先';
+      const it={}; COLS[isNP?'非優先項目':'優先項目'].forEach(c=>it[c]='');
+      it['申請用戶']=name; it['優先/非優先']=isNP?'非優先':'優先'; it['改善地點']=sites[q];
+      it['改善前耗電量(度)']=R.pre[q]; it['改善前耗電量(kLOE)']=R.preK[q]; it['改善前耗能量(kLOE)']=0;
+      it['改善後耗電量(度)']=R.post[q]; it['改善後耗電量(kLOE)']=R.postK[q]; it['改善後耗能量(kLOE)']=0;
       it._src='能源使用狀況表';
-      P.push(it);
-    });
+      if(isNP){
+        const t=energy.colText[q].replace(/非優先(示範|補助)?項目/,'').trim();
+        const hit=np.find(x=>x.site===sites[q]);
+        const d=descMap[sites[q]+'|非優先']||descMap['alt|'+sites[q]+'|非優先'];
+        it['改善措施']= hit? hit.measure+(hit.after?'：'+hit.after.replace(/\s+/g,' '):'') : (d? d : t);
+        it._fromTable=true; N.push(it);
+      } else {
+        it['改善系統套數']=1;
+        let ty=classifyType(energy.colText[q]); let how='表頭';
+        if(ty<0 && prioSectionType>=0){ ty=prioSectionType; how='第貳章'; }
+        if(ty<0 && /冰水主機/.test(energy.colText[q]) && /(一級能效|1級)/.test(flat)){ ty=5; how='全文'; }
+        it['優先項目類型']= ty>=0? PRIORITY_TYPES[ty] : '';
+        if(ty>=0 && how!=='表頭') flag('info',`「${sites[q]}」的優先項目類型由${how}文字判斷為「${PRIORITY_TYPES[ty]}」，請確認。`);
+        if(AC_TYPES.includes(ty)) it['是否有含區域泵']= /區域(水)?泵/.test(all)?'是':(/一次側/.test(all)?'否':'');
+        P.push(it);
+      }
+    }
+    if(N.some(x=>x._fromTable)) flag('info','非優先項目的「改善措施」取自第貳章改善說明或能源使用狀況表欄位說明，請參考執行概要表確認是否完整。');
   }
+  // 能源使用狀況表沒有非優先欄時，改由 Word 執行概要表建立非優先項目
+  if(!N.length){
+    np.forEach(x=>{ const it={}; COLS['非優先項目'].forEach(c=>it[c]=''); it['申請用戶']=name; it['優先/非優先']='非優先'; it['改善地點']=x.site;
+      it['改善措施']=x.measure+(x.after?'：'+x.after.replace(/\s+/g,' '):''); it['改善前耗能量(kLOE)']=0; it['改善後耗能量(kLOE)']=0; it._src='執行概要表'; N.push(it); });
+    if(N.length){
+      flag('warn','非優先項目的改善前／後耗電量需依第貳章計算表手動填入（能源使用狀況表未拆分優先與非優先）。');
+      P.forEach(p=>{ if(N.some(n=>n['改善地點']===p['改善地點'])) flag('warn',`「${p['改善地點']}」同時有非優先項目，能源使用狀況表的數值可能包含非優先部分，請依第貳章計算表拆分。`); });
+      summaryNP.forEach(s=>{ if(!summaryPrio.has(s) && P.length>1){
+        const other=P.filter(p=>!summaryPrio.has(p['改善地點']));
+        if(other.length) flag('warn',`優先／非優先說法矛盾：執行概要表將「${s}」全部列為非優先，但能源使用狀況表將「${other.map(o=>o['改善地點']).join('、')}」列為優先項目（${other.map(o=>o['優先項目類型']).join('；')}）。請確認後刪除或調整對應列。`);
+      }});
+    }
+  }
+  if(budget.np && budget.np.total>0 && !N.length){ const it={}; COLS['非優先項目'].forEach(c=>it[c]=''); it['申請用戶']=name; it['優先/非優先']='非優先'; it['改善前耗能量(kLOE)']=0; it['改善後耗能量(kLOE)']=0; N.push(it);
+    flag('warn','有非優先預算但無法辨識非優先項目，已新增一筆空白列，請手動填寫。'); }
+  if(budget.p && budget.p.total>0 && !P.length) flag('warn','有優先預算但無法辨識優先項目，請手動新增。');
+
   // 優先經費依場址拆分
   const allocate=(rows,key,subKey,bud,subTotal,flagLabel)=>{
     if(!rows.length || !bud) return;
@@ -481,23 +607,10 @@ function extract(lines, fileName){
     flag('info',`${flagLabel}經費依預算表場址直接費用拆分（${rows.map((r,i)=>r['改善地點']+' '+fmt(direct[i])).join('、')}），設計、管理、稅捐等共同費用按比例分攤。`);
   };
   allocate(P,'優先項目-專案經費(元)','優先項目-補助經費(元)',budget.p, sub.p!==undefined?sub.p:(M['優先補助總經費（元）']===''?null:M['優先補助總經費（元）']),'優先項目');
-
-  // 非優先項目
-  const N=np.map(x=>{ const it={}; COLS['非優先項目'].forEach(c=>it[c]=''); it['申請用戶']=name; it['優先/非優先']='非優先'; it['改善地點']=x.site;
-    it['改善措施']=x.measure+(x.after?'：'+x.after.replace(/\s+/g,' '):''); it['改善前耗能量(kLOE)']=0; it['改善後耗能量(kLOE)']=0; it._src='執行概要表'; return it; });
-  if(budget.np && budget.np.total>0 && !N.length){ const it={}; COLS['非優先項目'].forEach(c=>it[c]=''); it['申請用戶']=name; it['優先/非優先']='非優先'; it['改善前耗能量(kLOE)']=0; it['改善後耗能量(kLOE)']=0; N.push(it);
-    flag('warn','有非優先預算但無法從執行概要表辨識非優先項目，已新增一筆空白列，請手動填寫。'); }
-  if(N.length) flag('warn','非優先項目的改善前／後耗電量需依第貳章計算表手動填入（能源使用狀況表未拆分優先與非優先）。');
-  // 場址同時有優先與非優先
-  P.forEach(p=>{ if(N.some(n=>n['改善地點']===p['改善地點'])) flag('warn',`「${p['改善地點']}」同時有非優先項目，能源使用狀況表的數值可能包含非優先部分，請依第貳章計算表拆分。`); });
-  // 優先/非優先說法矛盾
-  summaryNP.forEach(s=>{ if(!summaryPrio.has(s) && energy.sites && energy.sites.length>1){
-    const other=energy.sites.filter((x,i)=>energy.prioLabel[i]==='優先' && !summaryPrio.has(x));
-    if(other.length) flag('warn',`優先／非優先說法矛盾：執行概要表將「${s}」全部列為非優先，但能源使用狀況表將「${other.join('、')}」列為優先項目（${other.map(o=>{const r=P.find(p=>p['改善地點']===o);return r?r['優先項目類型']:'';}).join('；')}）。請確認後刪除或調整對應列。`);
-  }});
+  if(P.some(p=>p['是否有含區域泵'])) flag('info','「是否有含區域泵」依全文是否提及區域泵判斷，請確認。');
   P.forEach(p=>{ if(!p['優先項目類型']) flag('warn',`「${p['改善地點']}」無法判斷優先項目類型，請手動選擇。`); });
   if(P.length) flag('info','容量欄位（改善後容量）無法自動判斷，請依計畫書填寫。');
-
+  if(energy && energy.sites) {} 
   return { main:M, priority:P, nonPriority:N, flags, src, cap:capVal, fileName };
 }
 
