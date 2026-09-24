@@ -257,11 +257,6 @@ function extract(lines, fileName){
   const tax = all.match(/統一編號\s*:?\s*(\d{8})/);
   if(tax) set('統一編號',tax[1],'封面');
 
-  // 補助上限類型
-  const multiSite = findIdx(lines,/^\([^)]{2,20}\)\s*[\u4e00-\u9fa5]{2}[縣市]/)>=0 && (lines.filter(l=>/^\([^)]{2,20}\)\s*[\u4e00-\u9fa5]{2}[縣市]/.test(l)).length>1);
-  if(/集團式?申請/.test(all) || multiSite){ set('補助上限類型','集團', /集團/.test(all)?'第壹章「集團式申請」':'多個申請場址'); }
-  else set('補助上限類型','單一用戶','預設（未見集團字樣）');
-
   // 單位地址（封面第一個地址）
   const ai = findIdx(lines,/申請(?:機關|單位)地址\s*:/);
   if(ai>=0){ const a=lines[ai].replace(/^.*?地址\s*:\s*/,''); const [c,d,s]=splitAddress(a);
@@ -611,6 +606,10 @@ function extract(lines, fileName){
   P.forEach(p=>{ if(!p['優先項目類型']) flag('warn',`「${p['改善地點']}」無法判斷優先項目類型，請手動選擇。`); });
   if(P.length) flag('info','容量欄位（改善後容量）無法自動判斷，請依計畫書填寫。');
   if(energy && energy.sites) {} 
+  // 補助上限類型：改善場址 2 個以上即為集團
+  const siteList=[...new Set([...P,...N].map(r=>(r['改善地點']||'').trim()).filter(x=>x && x!==name))];
+  if(siteList.length>=2){ set('補助上限類型','集團',`${siteList.length} 個改善場址`); flag('info',`改善場址共 ${siteList.length} 個（${siteList.join('、')}），補助上限類型判定為集團。`,'補助上限類型'); }
+  else set('補助上限類型','單一用戶', siteList.length? '1 個改善場址' : '未見多個改善場址');
   return { main:M, priority:P, nonPriority:N, flags, src, cap:capVal, fileName };
 }
 
@@ -643,6 +642,9 @@ function validate(c){
     const d=all.reduce((a,r)=>a+toNum(r['改善前耗電量(度)'])-toNum(r['改善後耗電量(度)']),0);
     if(Math.abs(d-sv)>1) w(`各項目節電量加總 ${fmt(d)} ≠ 節約用電量 ${fmt(sv)}。`,'節約用電量(kWh/年)');
   }
+  const sl=[...new Set([...c.priority,...c.nonPriority].map(r=>(r['改善地點']||'').trim()).filter(x=>x && x!==M['單位名稱']))];
+  const expT = sl.length>=2 ? '集團' : '單一用戶';
+  if(M['補助上限類型'] && M['補助上限類型']!==expT && sl.length) w(`項目表中有 ${sl.length} 個改善場址${sl.length>=2?'（'+sl.join('、')+'）':''}，補助上限類型應為「${expT}」，目前為「${M['補助上限類型']}」。`,'補助上限類型');
   const inst=['第一期','第二期','第三期'].reduce((a,k)=>a+(toNum(M[k+'補助款（元）'])||0),0);
   const tot=toNum(M['總計－補助總經費（元）']);
   if(inst && tot && Math.abs(inst-tot)>1 && !(c.cap && Math.abs(inst-c.cap)<=1)) w(`分期補助款加總 ${fmt(inst)} ≠ 總計補助經費 ${fmt(tot)}。`,'第一期補助款（元）');
