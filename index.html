@@ -151,17 +151,12 @@ td.num input{text-align:right}
 <script>
 /* ===== ESPC 計畫書抽取核心（瀏覽器與 Node 共用） ===== */
 const COLS = {"main": ["案件編號", "年度", "批次", "單位名稱", "補助上限類型", "行業別類別", "行業別小分類", "行業別其他", "統一編號", "單位地址", "單位地址鄉鎮區", "單位地址街道路號", "中小企業", "是否位於工業區", "園區類型", "園區", "工廠登記證號", "負責人", "負責人職稱", "負責人電話", "負責人Email", "聯絡人", "聯絡人職稱", "聯絡人電話", "聯絡人手機", "聯絡人傳真", "聯絡人Email", "聯絡人地址縣市", "聯絡人地址鄉鎮區", "聯絡人地址街道路號", "承諾節能率(%)", "節約用電量(kWh/年)", "節省油當量(kLOE/年)", "tCO2減量(噸/年)", "節約金額(元/年)", "總用電度(度/年)", "總電費(元/年)", "舊機作為備機", "分期付款", "分期年數", "改善項目備註", "非優先專案總經費（元）", "非優先補助總經費（元）", "優先專案總經費（元）", "優先補助總經費（元）", "總計－專案總經費（元）", "總計－補助總經費（元）", "優先方案數", "非優先方案數", "總方案數", "第一期補助款（元）", "第一期預定時間", "第二期補助款（元）", "第二期預定時間", "第三期補助款（元）", "第三期預定時間"], "優先項目": ["案號", "申請用戶", "優先/非優先", "改善前耗電量(度)", "改善前耗電量(kLOE)", "改善前耗能量(kLOE)", "改善後耗電量(度)", "改善後耗電量(kLOE)", "改善後耗能量(kLOE)", "改善系統套數", "合計容量", "優先項目-專案經費(元)", "優先項目-補助經費(元)", "優先項目類型", "改善地點", "1級冰水機組合計容量(RT)", "是否有含區域泵", "空調系統合計容量(RT)", "空壓系統合計容量(HP)", "熱水系統合計容量(kW)", "冷凍(藏)庫合計容量(RT)", "承諾之再節電量(kWh/年)", "人工智慧機械設備系統合計容量(kW)", "績效指標", "內容概要描述"], "非優先項目": ["案號", "申請用戶", "優先/非優先", "改善前耗電量(度)", "改善前耗電量(kLOE)", "改善前耗能量(kLOE)", "改善後耗電量(度)", "改善後耗電量(kLOE)", "改善後耗能量(kLOE)", "改善地點", "改善措施"]};
-const PRIORITY_TYPES = [
-  '服務業中央空調系統：水側系統耗能指標值低於 0.75 kW/RT',
-  '服務業中央空調系統：空氣側系統耗能指標值低於 0.25 kW/RT',
-  '資料中心能源效率指標值 (PUE) 低於 1.5',
-  '運用創能減少用電負載之設備技術',
-  '建置能源管理系統 (Energy Management System；EMS)',
-  '蒸氣壓縮式冰水機組能源效率分級標示 1 級之冰水機組',
-  '冷凍(藏)庫系統化改善',
-  '熱水系統改善為熱泵系統',
-  '可整合人工智慧自動演算控制進而優化用於生產或加工之機械生產設備，提高生產效率或能源效率之機械設備'
+// 116 年優先項目類型
+const PRIORITY_GROUPS = [
+  ['(一)系統化改善項目', ['冰水系統改善','中央空調空氣側系統改善','壓縮空氣系統改善','熱泵熱水系統改善','冷凍(藏)庫系統化改善','建置能源管理資訊系統']],
+  ['(二)其他', ['資料中心能源效率指標值(PUE)低於1.5','運用創能減少用電負載之設備技術','可整合人工智慧自動演算控制進而優化用於生產或加工之機械生產設備，提高生產效率或能源效率之機械設備']]
 ];
+const PRIORITY_TYPES = [].concat(...PRIORITY_GROUPS.map(g=>g[1]));
 const INDUSTRY = {
   '製造業': ['木竹製品製造業','紡織業','金屬加工業','食品加工業','生技醫療業','電機電子業','化工業','印刷業','塑膠製品製造業','航太業','化織業','玻璃業','食品業','鋼鐵業','金屬業','其他製造業','汽車及其零件製造業','電子零組件製造業','其他'],
   '服務業': ['批發零售業','公共行政業','藝術、娛樂及休閒服務業','運輸倉儲業','教育服務業','住宿餐飲業','醫療保健業','物流業','金融保險業','研究機構','殯葬業','其他'],
@@ -170,12 +165,13 @@ const INDUSTRY = {
   '政府機關': []
 };
 // 系統不產出、僅保留空白欄位
-const MANUAL_ONLY = ['案件編號','年度','批次','舊機作為備機','分期付款','分期年數','改善項目備註'];
+const MANUAL_ONLY = ['舊機作為備機','分期付款','分期年數','改善項目備註'];
+const DEFAULT_YEAR='116', DEFAULT_BATCH='1';
 const COMPUTED = ['總計－專案總經費（元）','總計－補助總經費（元）','優先方案數','非優先方案數','總方案數'];
 const NUMERIC_MAIN = ['承諾節能率(%)','節約用電量(kWh/年)','節省油當量(kLOE/年)','tCO2減量(噸/年)','節約金額(元/年)','總用電度(度/年)','總電費(元/年)','非優先專案總經費（元）','非優先補助總經費（元）','優先專案總經費（元）','優先補助總經費（元）','總計－專案總經費（元）','總計－補助總經費（元）','優先方案數','非優先方案數','總方案數','第一期補助款（元）','第二期補助款（元）','第三期補助款（元）'];
 const NUMERIC_ITEM = ['改善前耗電量(度)','改善前耗電量(kLOE)','改善前耗能量(kLOE)','改善後耗電量(度)','改善後耗電量(kLOE)','改善後耗能量(kLOE)','改善系統套數','合計容量','優先項目-專案經費(元)','優先項目-補助經費(元)','1級冰水機組合計容量(RT)','空調系統合計容量(RT)','空壓系統合計容量(HP)','熱水系統合計容量(kW)','冷凍(藏)庫合計容量(RT)','承諾之再節電量(kWh/年)','人工智慧機械設備系統合計容量(kW)'];
 const KLOE_PER_KWH = 860/9000000;
-const AC_TYPES = [0,1,5];
+const AC_TYPES = [0,1];
 
 /* ---------- 文字前處理 ---------- */
 function norm(s){
@@ -206,29 +202,36 @@ function toNum(s){ if(s===null||s===undefined||s==='') return null; const n=Numb
 function nums(s){ return (s.match(NUM_RE)||[]).map(toNum); }
 function fmt(n){ return n===null||n===undefined||n==='' ? '' : Number(n).toLocaleString('zh-TW',{maximumFractionDigits:4}); }
 function splitAddress(a){
-  a=(a||'').replace(/\s+/g,'').replace(/^\([^)]*\)/,'').replace(/^\d{3,6}(?=\D)/,'').replace(/^臺/,'臺');
+  a=(a||'').replace(/\s+/g,'').replace(/^\([^)]*\)/,'').replace(/^(台灣|臺灣|中華民國)/,'').replace(/^\d{3,6}(?=\D)/,'').replace(/^臺/,'臺');
   const m=a.match(/^(.{2}[縣市])(.{1,4}?[鄉鎮市區])(.+)$/);
   return m?[m[1],m[2],m[3]]:[a,'',''];
 }
 function cells(l){ return l.split('\t').map(c=>c.trim()); }
 function findIdx(lines, re, from=0, to=lines.length){ for(let i=from;i<Math.min(to,lines.length);i++) if(re.test(lines[i])) return i; return -1; }
 function findLastIdx(lines, re){ for(let i=lines.length-1;i>=0;i--) if(re.test(lines[i])) return i; return -1; }
+function chapterIdx(lines,alts){
+  const re=new RegExp('第\\s*('+alts+')\\s*章'); let idx=-1;
+  lines.forEach((l,i)=>{ if(/\.{4,}|…{2,}/.test(l)) return; const m=l.match(re); if(m && m.index<12) idx=i; });
+  return idx;
+}
 function rocMonth(s){
   if(!s) return '';
   let m=s.match(/(\d{2,3})\s*年\s*(\d{1,2})\s*月/) || s.match(/(\d{2,3})\/(\d{1,2})/);
   return m? m[1]+'/'+String(m[2]).padStart(2,'0') : '';
 }
 function classifyType(t){
+  // 回傳 PRIORITY_TYPES 索引：0 冰水、1 空氣側、2 壓縮空氣、3 熱泵、4 冷凍(藏)庫、5 能源管理、6 PUE、7 創能、8 人工智慧
   t=(t||'').replace(/\s+/g,'');
-  if(/水側/.test(t)) return 0;
   if(/空氣側/.test(t)) return 1;
-  if(/PUE|資料中心/i.test(t)) return 2;
-  if(/創能/.test(t)) return 3;
-  if(/(1|一)級(能效)?.{0,6}冰水機組|分級標示1級/.test(t)) return 5;
-  if(/冷凍|冷藏/.test(t)) return 6;
-  if(/熱泵/.test(t)) return 7;
+  if(/水側|冰水系統/.test(t)) return 0;
+  if(/PUE|資料中心/i.test(t)) return 6;
+  if(/創能/.test(t)) return 7;
   if(/人工智慧/.test(t)) return 8;
-  if(/能源管理系統|EMS/.test(t)) return 4;
+  if(/冷凍|冷藏/.test(t)) return 4;
+  if(/熱泵/.test(t)) return 3;
+  if(/壓縮空氣|空壓/.test(t)) return 2;
+  if(/(1|一)級(能效)?.{0,6}冰水機組|分級標示1級|冰水主機|冰水機組/.test(t)) return 0;
+  if(/能源管理(資訊)?系統|EMS/.test(t)) return 5;
   return -1;
 }
 
@@ -240,6 +243,13 @@ function extract(lines, fileName){
   const set=(k,v,s)=>{ if(v===null||v===undefined||v==='') return; M[k]=v; if(s) src[k]=s; };
   const all=lines.join('\n');
   const flat=lines.join(' ');
+
+  // 年度、批次（固定值）與案件編號（取自檔名，例如 116-1A001）
+  set('年度',DEFAULT_YEAR,'預設 116 年'); set('批次',DEFAULT_BATCH,'預設第 1 批');
+  { const fn=(fileName||'').replace(/\.[^.]+$/,'');
+    const m=fn.match(/(\d{3})\s*[-_－]?\s*(\d)\s*([A-Za-z])\s*(\d{3})/);
+    if(m) set('案件編號',`${m[1]}-${m[2]}${m[3].toUpperCase()}${m[4]}`,'檔名');
+    else flag('warn','檔名中找不到案件編號（格式如 116-1A001），請手動填寫。','案件編號'); }
 
   // 封面與摘要表區域
   const iSum = findIdx(lines,/摘要表/);
@@ -343,8 +353,14 @@ function extract(lines, fileName){
   if(ctSeg.length && !M['聯絡人Email']) flag('warn','摘要表中找不到聯絡人 Email。','聯絡人Email');
 
   // 承諾節能率
+  let multiRate=null;
+  { const ir=sumLines.findIndex(l=>/承諾之?節能率/.test(l));
+    if(ir>=0){ const near=sumLines.slice(Math.max(0,ir-2),ir+3).join(' ');
+      const ms=[...near.matchAll(/([\u4e00-\u9fff\-]{2,})\s*([\d.]+)\s*\[?%/g)].filter(m=>!/承諾|節能率/.test(m[1])||true).map(m=>({lab:m[1].replace(/^.*節能率/,''),v:toNum(m[2])}));
+      const named=ms.filter(m=>m.lab && !/^(本計畫書|本專案計畫書所)?承諾之?$/.test(m.lab));
+      if(named.length>1) multiRate=named.map(m=>m.lab+' '+m.v+'%'); } }
   const rate = sumText.replace(/\s+/g,'').match(/承諾之?節能率[^\d]*([\d.]+)\[?%/);
-  if(rate) set('承諾節能率(%)',toNum(rate[1]),'摘要表');
+  if(rate && !multiRate) set('承諾節能率(%)',toNum(rate[1]),'摘要表');
 
   // 分期補助款
   const sumFlat=sumLines.join(' ');
@@ -361,14 +377,14 @@ function extract(lines, fileName){
   // 製造業才有：工業區、園區、工廠登記
   if(M['行業別類別']==='製造業'){
     const f=all.match(/工廠登記(?:證)?(?:號碼|編號|證號|號)?\s*:\s*([^\n]+)/) || all.match(/工廠登記(?:證)?(?:號碼|編號|證號|號)?\s*([A-Za-z0-9\-]{6,})/);
-    if(f){ const v=f[1].replace(/\s*\/\s*/g,'/').replace(/\s+/g,' ').trim(); if(/\d{6,}/.test(v)) set('工廠登記證號',v,'封面'); }
-    const zl=all.match(/(?:^|\n)\s*(?:所在)?(?:工業區|園區)\s*:\s*([^\n]+)/);
-    const z = zl? zl[1].replace(/\s*\/\s*/g,'/').trim() : ((flat.match(/([^\s,、()「」:]{2,12}(?:工業區|科學園區|加工出口區|科技產業園區))/)||[])[1]);
-    if(z){ set('是否位於工業區','是','計畫書'); set('園區',z,zl?'封面':'計畫書'); flag('info','偵測到園區名稱，請確認「園區類型」。','園區類型'); }
+    if(f){ const v=f[1].replace(/(?:\d ){4,}\d/g,m=>m.replace(/ /g,'')).replace(/\s*\/\s*/g,'/').replace(/\s+/g,' ').trim(); if(/\d{6,}/.test(v)) set('工廠登記證號',v,'封面'); }
+    const zl=cover.join('\n').match(/(?:^|\n)\s*(?:所在)?(?:工業區|園區)\s*:\s*([^\n]*)/);
+    const z = zl? zl[1].replace(/\s*\/\s*/g,'/').trim() : '';
+    if(z){ set('是否位於工業區','是','封面'); set('園區',z,'封面工業區'); }
   }
 
   // 第壹章：總用電度、總電費（多場址加總；若文中已有合計則採合計）
-  const iCh2 = findLastIdx(lines,/^第\s*貳\s*章/);
+  const iCh2 = chapterIdx(lines,'貳|2|二');
   const ch1 = lines.slice(0, iCh2>0?iCh2:lines.length).join(' ');
   const dedupTotal=a=>{ const t=a.find(x=>Math.abs(a.filter(y=>y!==x).reduce((s,y)=>s+y,0)-x)<=1); return (t!==undefined && a.length>2)? [t] : a; };
   const kwhAll=[...new Set([...ch1.matchAll(/(?:全年(?:度)?(?:總)?用電(?:度數|量)?|共使用)\s*[:為]?\s*([\d,]{4,})\s*kWh/gi)].map(m=>toNum(m[1])))];
@@ -378,110 +394,179 @@ function extract(lines, fileName){
   else flag('warn','第壹章找不到全年用電度數。','總用電度(度/年)');
   if(fee.length){ set('總電費(元/年)',fee.reduce((a,b)=>a+b,0),'第壹章'); if(fee.length>1) flag('info',`總電費為 ${fee.length} 個場址加總：${fee.map(fmt).join(' + ')}`,'總電費(元/年)'); }
 
-  // 能源使用狀況表（依數值關係辨識各列，不依賴列標題格式）
+  // 能源使用狀況表（依數值關係辨識各列；支援一張表拆成多張、含安全因子、無油當量列）
   const isNumTok=t=>/^-?[\d,]*\d(?:\.\d+)?%?$/.test(t);
   function trail(l){ const toks=l.split(/[\t ]+/).filter(Boolean); let k=toks.length; while(k>0 && isNumTok(toks[k-1])) k--;
     const nt=toks.slice(k); return {label:toks.slice(0,k).join(' '), vals:nt.map(x=>toNum(x.replace('%',''))), pct:nt.length>0 && nt.every(x=>x.endsWith('%'))}; }
   const near=(a,b,tol)=> Math.abs(a-b) <= Math.max(tol.abs||0, Math.abs(b)*(tol.rel||0));
-  const rowsNear=(A,B,f,tol)=> A.length===B.length && A.every((x,i)=> B[i]===0 && x===0 || near(x, f(B[i],i), tol));
-  let energy=null;
-  (function(){
-    const heads=[]; lines.forEach((l,i)=>{ if(/^表\s*\S{0,8}.{0,50}能源使用狀況/.test(l.replace(/\s+/g,''))||/^表.{0,60}能源使用狀況/.test(l)) heads.push(i); });
-    const iPre0=findIdx(lines,/^1\s*、\s*改善前(耗[能電]|用電)(?!金額)/); if(iPre0>=0) heads.push(Math.max(0,iPre0-12));
-    for(const h of heads){
-      const rows=[]; let acc=[]; const region=[];
-      for(let i=h+1;i<Math.min(lines.length,h+90);i++){
-        const l=lines[i];
-        if(rows.length>=3 && (/^(備註|註)\s*[:\d]/.test(l) || /^表\s*\S/.test(l))) break;
-        const t=trail(l); region.push({l,t});
-        if(t.vals.length>=2){ rows.push({...t, idx:i, pre:acc.join(' ')}); acc=[]; }
-        else { acc.push(l); if(rows.length) rows[rows.length-1].post=(rows[rows.length-1].post||'')+' '+l; }
-      }
-      if(rows.length<4) continue;
-      const cnt={}; rows.forEach(r=>cnt[r.vals.length]=(cnt[r.vals.length]||0)+1);
-      const NT=+Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0];
-      const hdr=[]; for(const x of region){ if(x.t.vals.length===NT) break; if(x.t.vals.length<2) hdr.push(x.l); }
-      const R=rows.filter(r=>r.vals.length===NT);
-      const V=R.filter(r=>!r.pct);
-      // 找「前 − 後 = 節約」的三列組合
-      const triples=[];
-      for(let i=0;i<V.length;i++) for(let j=i+1;j<V.length;j++) for(let k=j+1;k<V.length;k++){
-        const a=V[i].vals,b=V[j].vals,c=V[k].vals;
-        if(a.every((x,q)=>near(x-b[q],c[q],{abs:1.5,rel:0.002})) && a.some(x=>x>=100)) triples.push([V[i],V[j],V[k]]); }
-      const kloeOf=(row)=>V.find(r=>r!==row && rowsNear(r.vals,row.vals,(x)=>x*KLOE_PER_KWH,{abs:0.06,rel:0.03}));
-      let kT=triples.find(t=>kloeOf(t[0])&&kloeOf(t[1]));
-      if(!kT) continue;
-      const mT=triples.find(t=>t!==kT && t[0].vals.every((x,q)=>kT[0].vals[q]===0 || (x/kT[0].vals[q]>1.5 && x/kT[0].vals[q]<9)));
-      const co2=V.find(r=>/co2\s*減量/i.test(r.label+' '+r.pre)) || V.find(r=>r!==kT[2] && rowsNear(r.vals,kT[2].vals,x=>x*0.474/1000,{abs:0.2,rel:0.1}));
-      const pcts=R.filter(r=>r.pct); const rateRow=pcts.find(r=>/耗能基準/.test(r.label+' '+r.pre+' '+(r.post||'')))||pcts[pcts.length-1];
-      const total = NT>=2 && Math.abs(kT[0].vals.slice(0,-1).reduce((a,b)=>a+b,0)-kT[0].vals[NT-1])<=Math.max(1,kT[0].vals[NT-1]*0.001);
-      const N = total? NT-1 : NT;
-      const cut=a=>a? a.slice(0,N):null, last=a=>a? a[a.length-1]:null;
-      // 表頭：場址與各欄說明
-      const GENERIC=/^(改善地點|設備能源耗用(位置)?|合計|能源單價|\(元\/kWh\)|\(元\/kwh\))$/i;
-      let siteToks=[]; const colText=Array(N).fill('');
-      let expectSites=false;
-      hdr.forEach(l=>{
-        if(/單價/.test(l)) return;
-        let t=l.includes('\t')? cells(l) : l.split(' ');
-        if(/^改善地點/.test(t[0])){ t=t.slice(1); if(!t.length){ expectSites=true; return; } }
-        t=t.map(x=>x.trim()).filter(x=>x && !GENERIC.test(x));
-        if(!t.length) return;
-        if(t.length===1 && N>1 && t[0]===name) return;
-        if(expectSites || (/^改善地點/.test(l))){ siteToks=t; expectSites=false; return; }
-        if(t.length===N) t.forEach((x,q)=>colText[q]+=x);
-        else if(N===1) colText[0]+=(colText[0]?' ':'')+t.join(' ');
-      });
-      if(!siteToks.length){ const sl=hdr.find(l=>/^改善地點/.test(l)); if(sl) siteToks=(sl.includes('\t')?cells(sl):sl.split(' ')).slice(1).filter(x=>x&&!GENERIC.test(x)); }
-      energy={N,total, R:{pre:cut(kT[0].vals),post:cut(kT[1].vals),sav:cut(kT[2].vals),preK:cut(kloeOf(kT[0]).vals),postK:cut(kloeOf(kT[1]).vals),
-        savK:(kloeOf(kT[2])||{}).vals||null, savF:mT?mT[2].vals:null, co2:co2?co2.vals:null, rate:rateRow?rateRow.vals:null},
-        siteToks, colText, prio:colText.map(t=>/非優先/.test(t)?'非優先':'優先'), head:h};
-      energy.last={sav:last(kT[2].vals), savK:last(energy.R.savK), savF:last(energy.R.savF), co2:last(energy.R.co2), rate:last(energy.R.rate)};
-      break;
+  const rowsNear=(A,B,f,tol)=> A.length===B.length && A.every((x,i)=> (B[i]===0 && x===0) || near(x, f(B[i],i), tol));
+  const TOC=/\.{4,}|…{2,}/;
+  const txt=r=>((r.pre||'')+' '+r.label+' '+(r.post||'')).replace(/\s+/g,'');
+  function parseBlock(h){
+    const rows=[]; let acc=[]; const region=[]; let lastWasRow=false;
+    for(let i=h+1;i<Math.min(lines.length,h+90);i++){
+      const l=lines[i];
+      if(rows.length && /^改善地點/.test(l)) break;
+      if(rows.length>=3 && (/^(備註|註)\s*[:\d]/.test(l) || /^表\s*\S/.test(l) || /^第.{1,3}章/.test(l))) break;
+      if(/^<<PAGE/.test(l)) continue;
+      const t=trail(l); region.push({l,t});
+      if(t.vals.length>=2){ rows.push({...t, idx:i, pre:acc.join(' '), post:''}); acc=[]; lastWasRow=true; }
+      else if(rows.length && lastWasRow && /^\(/.test(l)){ rows[rows.length-1].post+=' '+l; }
+      else { acc.push(l); lastWasRow=false; }
     }
+    if(rows.length<3) return null;
+    const cnt={}; rows.forEach(r=>cnt[r.vals.length]=(cnt[r.vals.length]||0)+1);
+    const NT=+Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0];
+    const R=rows.filter(r=>r.vals.length===NT); const V=R.filter(r=>!r.pct);
+    const triples=[];
+    for(let i=0;i<V.length;i++) for(let j=i+1;j<V.length;j++) for(let k=j+1;k<V.length;k++){
+      const a=V[i].vals,b=V[j].vals,c=V[k].vals;
+      if(a.every((x,q)=>near(x-b[q],c[q],{abs:1.5,rel:0.002})) && a.some(x=>x>=100)) triples.push([V[i],V[j],V[k]]); }
+    const kloeOf=(vals,not)=>V.find(r=>r!==not && rowsNear(r.vals,vals,(x)=>x*KLOE_PER_KWH,{abs:0.06,rel:0.03}));
+    let kT=triples.find(t=>kloeOf(t[0].vals,t[0])&&kloeOf(t[1].vals,t[1]))
+      || triples.find(t=>/改善前/.test(txt(t[0])) && /改善後/.test(txt(t[1])) && /節約|節省/.test(txt(t[2])) && !/金額|費用/.test(txt(t[0])+txt(t[1])));
+    if(!kT) return null;
+    const mT=triples.find(t=>t!==kT && t[0].vals.every((x,q)=>kT[0].vals[q]===0 || (x/kT[0].vals[q]>1.5 && x/kT[0].vals[q]<9)));
+    // 含安全因子的節約列
+    const sf=V.find(r=>r!==kT[2] && /安全因子/.test(txt(r)) && !/金額|費用|CO|減量|節能率/i.test(txt(r)) && r.vals.every((x,q)=>x<=kT[2].vals[q]+1));
+    const sfF=mT && V.find(r=>r!==mT[2] && /安全因子/.test(txt(r)) && /金額|費用/.test(txt(r)) && r.vals.every((x,q)=>x<=mT[2].vals[q]+1));
+    const sav = sf? sf.vals : kT[2].vals;
+    const co2c=V.filter(r=>![...kT,...(mT||[])].includes(r) && rowsNear(r.vals,sav,x=>x*0.474/1000,{abs:0.2,rel:0.03}));
+    const co2 = co2c.find(r=>/CO|減量/i.test(txt(r))) || co2c[0] || V.find(r=>/co2\s*減量/i.test(txt(r)));
+    const pcts=R.filter(r=>r.pct);
+    const total = NT>=2 && Math.abs(kT[0].vals.slice(0,-1).reduce((a,b)=>a+b,0)-kT[0].vals[NT-1])<=Math.max(1,kT[0].vals[NT-1]*0.001);
+    const N = total? NT-1 : NT;
+    const cut=a=>a? a.slice(0,N):null;
+    const lastOf=a=>a? (total? a[NT-1] : a.slice(0,N).reduce((s,x)=>s+x,0)) : null;
+    // 表頭
+    const hdr=[]; for(const x of region){ if(x.t.vals.length===NT) break; if(x.t.vals.length<2) hdr.push(x.l); }
+    const GENERIC=/^(改善地點|設備能源耗用(位置)?|合計|能源單價|\(元\/kWh\))$/i;
+    let siteToks=[]; const colText=Array(N).fill(''); let expectSites=false;
+    hdr.forEach(l=>{
+      if(/單價/.test(l) || /^\(/.test(l) || /^\d+(\.\d+)?$/.test(l.trim())) return;
+      let t=l.includes('\t')? cells(l) : l.split(' ');
+      if(/^改善地點/.test(t[0])){ t=t.slice(1); if(!t.length){ expectSites=true; return; } t=t.map(x=>x.trim()).filter(x=>x&&!GENERIC.test(x)); siteToks=t; return; }
+      t=t.map(x=>x.trim()).filter(x=>x && !GENERIC.test(x));
+      if(!t.length) return;
+      if(t.length===1 && N>1 && t[0]===name) return;
+      if(expectSites){ siteToks=t; expectSites=false; return; }
+      if(t.length===N) t.forEach((x,q)=>colText[q]+=x);
+      else if(N===1) colText[0]+=(colText[0]?' ':'')+t.join(' ');
+    });
+    const preK=kloeOf(kT[0].vals,kT[0]), postK0=kloeOf(kT[1].vals,kT[1]);
+    const pre=cut(kT[0].vals);
+    const post= sf? pre.map((x,q)=>Math.round((x-sav[q])*100)/100) : cut(kT[1].vals);
+    const k2=a=>a.map(x=>Math.round(x*KLOE_PER_KWH*100)/100);
+    const savK = sf? null : (kloeOf(kT[2].vals,kT[2])||{}).vals;
+    return { first:rows[0].idx, N, total, siteToks, colText, prio:colText.map(t=>/非優先/.test(t)?'非優先':'優先'),
+      pre, post, preK: preK? cut(preK.vals) : k2(pre), postK: (postK0 && !sf)? cut(postK0.vals) : k2(post),
+      computedK: !preK || !!sf, sf: !!sf,
+      last:{ pre:lastOf(kT[0].vals), sav:lastOf(sav), savK: savK? lastOf(savK) : Math.round(lastOf(sav)*KLOE_PER_KWH*100)/100,
+        savF: sfF? lastOf(sfF.vals) : (mT? lastOf(mT[2].vals) : null), co2: co2? lastOf(co2.vals) : null,
+        rate: pcts.length? lastOf((pcts.find(r=>/耗能基準/.test(txt(r)) && (!sf || /安全因子/.test(txt(r))))||pcts.find(r=>/耗能基準/.test(txt(r)))||pcts[pcts.length-1]).vals) : null } };
+  }
+  let energy=null, energyHead='';
+  (function(){
+    const heads=[]; lines.forEach((l,i)=>{ if(!TOC.test(l) && /^表.{0,60}能源使用狀況/.test(l)) heads.push(i); });
+    heads.sort((a,b)=>(/績效保證/.test(lines[b])?1:0)-(/績效保證/.test(lines[a])?1:0) || a-b);
+    if(heads.length){ const id=(lines[heads[0]].replace(/\s+/g,'').match(/^表[(（]?[\d\-–.]+[)）]?/)||[''])[0]; energyHead=(id?id+' ':'')+'能源使用狀況表'; }
+    let starts=[];
+    if(heads.length){
+      const iCh3=findIdx(lines,/^第.{0,4}(參|叁|三|3)\s*章/,heads[0]);
+      starts=[heads[0]];
+      for(let i=heads[0]+1;i<Math.min(lines.length,heads[0]+400,iCh3>0?iCh3:Infinity);i++) if(/^改善地點/.test(lines[i])) starts.push(i-1);
+    }
+    const iPre0=findIdx(lines,/^1\s*、\s*改善前(耗[能電]|用電)(?!金額)/); if(iPre0>=0) starts.push(Math.max(0,iPre0-12));
+    const blocks=[]; const seen=new Set();
+    for(const s of starts){ const b=parseBlock(s); if(b && !seen.has(b.first)){ seen.add(b.first); blocks.push(b); } }
+    if(!blocks.length) return;
+    // 多張表：以第一張有效表所在位置為準，只合併後續連續的表
+    const useB = blocks.length>1 && heads.length ? blocks.filter(b=>b.first>heads[0]) : [blocks[0]];
+    const B = useB.length? useB : [blocks[0]];
+    const cat=k=>[].concat(...B.map(b=>b[k]));
+    energy={ N:B.reduce((s,b)=>s+b.N,0), blocks:B.length,
+      siteToks: B.length>1 ? [].concat(...B.map(b=>Array.from({length:b.N},(_,q)=>b.siteToks[q]||''))).map(x=>x||'') : B[0].siteToks,
+      colText:cat('colText'), prio:cat('prio'),
+      R:{pre:cat('pre'),post:cat('post'),preK:cat('preK'),postK:cat('postK')},
+      computedK:B.some(b=>b.computedK), sf:B.some(b=>b.sf) };
+    const sum=k=>{ const v=B.map(b=>b.last[k]); return v.some(x=>x===null)? null : Math.round(v.reduce((a,b)=>a+b,0)*100)/100; };
+    energy.last={ pre:sum('pre'), sav:sum('sav'), savK:sum('savK'), savF:sum('savF'), co2:sum('co2'), rate: B.length===1? B[0].last.rate : null };
+    if(energy.siteToks.some(x=>!x)) energy.siteToks=energy.siteToks.filter(Boolean);
   })();
   if(energy){
-    set('節約用電量(kWh/年)', energy.last.sav,'能源使用狀況表');
-    set('節省油當量(kLOE/年)', energy.last.savK,'能源使用狀況表');
-    set('tCO2減量(噸/年)', energy.last.co2,'能源使用狀況表');
-    set('節約金額(元/年)', energy.last.savF,'能源使用狀況表');
-    const rE=energy.last.rate;
-    if(rE!==null && M['承諾節能率(%)']!=='' && Math.abs(rE-M['承諾節能率(%)'])>0.05) flag('warn',`摘要表承諾節能率 ${M['承諾節能率(%)']}% 與能源使用狀況表 ${rE}% 不一致。`,'承諾節能率(%)');
+    const es=energyHead||'能源使用狀況表';
+    set('節約用電量(kWh/年)', energy.last.sav,es);
+    set('節省油當量(kLOE/年)', energy.last.savK, energy.computedK?es+'（度數換算）':es);
+    set('tCO2減量(噸/年)', energy.last.co2,es);
+    set('節約金額(元/年)', energy.last.savF,es);
+    if(energy.blocks>1) flag('info',`能源使用狀況表分為 ${energy.blocks} 張，已合併計算。`);
+    if(energy.sf) flag('info','能源使用狀況表列有含安全因子的節約數值，節約用電量、節約金額、CO2 減量採含安全因子數值；項目改善後耗電量以「改善前 − 含安全因子節電量」計算。');
+    if(energy.computedK) flag('info','能源使用狀況表沒有可用的油當量列，kLOE 依「度數 × 0.0000956」換算。','節省油當量(kLOE/年)');
+    const overall = energy.last.pre? Math.round(energy.last.sav/energy.last.pre*1000)/10 : null;
+    if(multiRate && overall!==null){ set('承諾節能率(%)',overall,'總節約 ÷ 總改善前'); flag('info',`摘要表列出各場址節能率（${multiRate.join('、')}），整體承諾節能率以總節約用電量 ÷ 總改善前用電量計算為 ${overall}%。`,'承諾節能率(%)'); }
+    const rE = energy.last.rate!==null? energy.last.rate : overall;
+    if(!multiRate && rE!==null && M['承諾節能率(%)']!=='' && Math.abs(rE-M['承諾節能率(%)'])>0.15) flag('warn',`摘要表承諾節能率 ${M['承諾節能率(%)']}% 與能源使用狀況表 ${rE}% 不一致。`,'承諾節能率(%)');
     if(energy.last.co2===null) flag('warn','能源使用狀況表中找不到 CO2 減量，請手動填寫。','tCO2減量(噸/年)');
     if(energy.last.savF===null) flag('warn','能源使用狀況表中找不到節約金額，請手動填寫。','節約金額(元/年)');
   } else flag('warn','找不到能源使用狀況表，節能效益與項目數值需手動填寫。');
+
   // 效益表交叉檢查（原則：以能源使用狀況表為準）
-  const iBen = findIdx(lines,/效益表/);
+  const iBen = lines.findIndex(l=>/效益表/.test(l) && !TOC.test(l));
   if(iBen>=0){
-    const iTot = findIdx(lines,/^合\s*計/,iBen,iBen+25);
+    const iTot = findIdx(lines,/^合\s*計/,iBen,iBen+40);
     if(iTot>=0){
       const v=nums(lines[iTot]);
-      const chk=[['節約用電量(kWh/年)','節約用電量'],['節約金額(元/年)','節約金額'],['節省油當量(kLOE/年)','節省油當量'],['tCO2減量(噸/年)','CO2 減量']];
+      const firstNum=findIdx(lines,/\d[\d,]{3,}/,iBen+1,iTot+1);
+      const hd=lines.slice(iBen,firstNum>iBen?firstNum:iBen+6).join('').replace(/\s+/g,'');
+      const chk=[['節約用電量(kWh/年)','節約用電量',/用電量|耗電量/],['節約金額(元/年)','節約金額',/金額|費用/],['節省油當量(kLOE/年)','節省油當量',/油當量/],['tCO2減量(噸/年)','CO2 減量',/CO|碳/i]].filter(c=>c[2].test(hd));
       const miss=[]; for(const [k,lab] of chk){ const x=M[k]; if(x==='') continue; if(!v.some(n=>Math.abs(n-x)<=Math.max(0.051,Math.abs(x)*0.0005))) miss.push(`${lab} ${fmt(x)}`); }
       if(miss.length) flag('warn',`效益表合計列與能源使用狀況表不一致：效益表未出現 ${miss.join('、')}（效益表合計列數值：${v.map(fmt).join('、')}）。已採用能源使用狀況表數值。`);
     }
   }
 
-  // 經費：依標題找各預算表合計
-  const budget={};
-  const iCh5 = findLastIdx(lines,/^第\s*伍\s*章/);
-  const heads=[]; lines.forEach((l,i)=>{ if(i<iCh5) return; const t=l.replace(/\s+/g,''); if(t.length<40 && /費用/.test(t) && /優先/.test(t) && !/推廣|比例/.test(t)) heads.push({i,np:/非優先/.test(t)}); });
-  for(const h of heads){ const k=h.np?'np':'p'; if(budget[k]) continue;
-    const it=findIdx(lines,/^合\s*計/,h.i+1,h.i+80); if(it>=0){ const v=nums(lines[it]); if(v.length) budget[k]={total:v[0], from:h.i, to:it}; } }
-  if(!budget.p && !budget.np){ const m=all.match(/預計總經費[^\d]*([\d,]{5,})/); if(m){ budget.p={total:toNum(m[1]),from:-1,to:-1}; flag('warn','找不到優先／非優先預算表，暫以「預計總經費」列為優先專案總經費，請確認。','優先專案總經費（元）'); } }
-  // 補助計算式 a × b% = c
-  const triples=[]; const tre=[/([\d,]{5,})\s*[×xX*]\s*(\d+(?:\.\d+)?)\s*%\s*=\s*([\d,]{3,})/g, /([\d,]{5,})\s+(\d+(?:\.\d+)?)\s*%\s+([\d,]{3,})/g];
-  lines.slice(iCh5>0?iCh5:0).forEach(l=>tre.forEach(re=>{ let m; re.lastIndex=0; while((m=re.exec(l))){ const a=toNum(m[1]),b=toNum(m[2]),c=toNum(m[3]); if(Math.abs(a*b/100-c)<=1.5) triples.push({a,b,c}); } }));
+  // 經費：各預算表（可能依場址拆成多張）
+  const budget={p:null,np:null}; const bTables={p:[],np:[]};
+  const iCh5 = chapterIdx(lines,'伍|5|五');
+  const seenTot=new Set();
+  lines.forEach((l,i)=>{ if(iCh5>0 && i<iCh5) return; if(TOC.test(l)) return; const t=l.replace(/\s+/g,'');
+    if(!(t.length<50 && /費用/.test(t) && /優先/.test(t) && !/推廣|比例|整體/.test(t))) return;
+    const it=findIdx(lines,/^合\s*計/,i+1,i+80); if(it<0) return;
+    const site=(t.match(/\(([^)]+)\)/)||[])[1] || '';
+    const ex=[...bTables.p,...bTables.np].find(x=>x.to===it);
+    if(ex){ if(!ex.site && site) ex.site=site; return; }
+    const v=nums(lines[it]); if(!v.length) return;
+    bTables[/非優先/.test(t)?'np':'p'].push({site,total:v[0],from:i,to:it});
+  });
+  // 多張預算表時，檢查各表內項目加總與合計是否一致
+  [...bTables.p,...bTables.np].forEach(t=>{ if(bTables.p.length+bTables.np.length<3) return;
+    let sum=0; lines.slice(t.from+1,t.to).forEach(l=>{ const v=nums(l.replace(/\d+(\.\d+)?%/g,'')).filter(x=>x>=1000); if(v.length) sum+=v[0]; });
+    if(sum && Math.abs(sum-t.total)>1 && Math.abs(sum-2*t.total)>1) flag('warn',`預算表「${t.site||'未命名'}」（${bTables.p.includes(t)?'優先':'非優先'}）的各項金額加總 ${fmt(sum)}，與表內合計 ${fmt(t.total)} 不一致。`); });
+  for(const k of ['p','np']) if(bTables[k].length) budget[k]={total:bTables[k].reduce((s,x)=>s+x.total,0), from:bTables[k][0].from, to:bTables[k][0].to, tables:bTables[k]};
+  if(!budget.p && !budget.np){ const m=all.match(/預計總經費[^\d]*([\d,]{5,})/); if(m){ budget.p={total:toNum(m[1]),from:-1,to:-1,tables:[]}; flag('warn','找不到優先／非優先預算表，暫以「預計總經費」列為優先專案總經費，請確認。','優先專案總經費（元）'); } }
+  // 補助費用初估表的計算式 a × b% = c，依所在或前一行文字判斷優先／非優先
+  const tre=[/([\d,]{5,})\s*[×xX*]\s*(\d+(?:\.\d+)?)\s*%\s*=\s*([\d,]{3,})/g, /([\d,]{5,})\s+(\d+(?:\.\d+)?)\s*%\s+([\d,]{3,})/g];
+  const tri={};
+  lines.forEach((l,i)=>{ if(iCh5>0 && i<iCh5) return; tre.forEach(re=>{ let m; re.lastIndex=0; while((m=re.exec(l))){
+    const a=toNum(m[1]),b=toNum(m[2]),c=toNum(m[3]); if(Math.abs(a*b/100-c)>1.5) continue;
+    const ctx=l.slice(0,m.index)+' '+(lines[i-1]||''); const k=/非優先/.test(ctx)?'np':(/優先/.test(ctx)?'p':null);
+    const kk = k || (budget.p && a===budget.p.total ? 'p' : (budget.np && a===budget.np.total ? 'np' : null));
+    if(kk && !tri[kk]) tri[kk]={a,b,c}; } }); });
   const sub={};
-  for(const k of ['p','np']){ if(!budget[k]) continue; const t=triples.find(x=>x.a===budget[k].total); if(t){ sub[k]=t.c; budget[k].pct=t.b; } }
-  if(budget.p){ set('優先專案總經費（元）',budget.p.total,'優先項目預算表'); }
-  if(budget.np){ set('非優先專案總經費（元）',budget.np.total,'非優先項目預算表'); }
   const smeYes=M['中小企業']==='是';
-  for(const k of ['p','np']){ if(!budget[k]) continue; const key=k==='p'?'優先補助總經費（元）':'非優先補助總經費（元）';
-    if(sub[k]!==undefined) set(key,sub[k],'補助費用初估表');
-    else { const r=(k==='p'?(smeYes?40:30):(smeYes?30:20)); set(key,Math.round(budget[k].total*r/100),'依比例試算'); flag('warn',`找不到${k==='p'?'優先':'非優先'}補助計算式，已依${smeYes?'中小企業':'非中小企業'}比例 ${r}% 試算。`,key); }
+  for(const k of ['p','np']){
+    const lab=k==='p'?'優先':'非優先', kT=k==='p'?'優先專案總經費（元）':'非優先專案總經費（元）', kS=k==='p'?'優先補助總經費（元）':'非優先補助總經費（元）';
+    if(tri[k]){
+      set(kT,tri[k].a,'補助費用初估表'); set(kS,tri[k].c,'補助費用初估表'); sub[k]=tri[k].c;
+      if(!budget[k]) budget[k]={total:tri[k].a,from:-1,to:-1,tables:[]};
+      else if(Math.abs(budget[k].total-tri[k].a)>1) flag('warn',`${lab}預算表合計 ${fmt(budget[k].total)}（${budget[k].tables.map(t=>(t.site||'預算表')+' '+fmt(t.total)).join('、')}）與補助費用初估表的${lab}經費 ${fmt(tri[k].a)} 不一致，主表採用補助費用初估表。`,kT);
+      budget[k].total=tri[k].a; budget[k].pct=tri[k].b;
+    } else if(budget[k]){
+      set(kT,budget[k].total,lab+'項目預算表');
+      const r=(k==='p'?(smeYes?40:30):(smeYes?30:20)); set(kS,Math.round(budget[k].total*r/100),'依比例試算'); sub[k]=M[kS];
+      flag('warn',`找不到${lab}補助計算式，已依${smeYes?'中小企業':'非中小企業'}比例 ${r}% 試算。`,kS);
+    }
     const exp = k==='p'?(smeYes?40:30):(smeYes?30:20);
-    if(budget[k].pct!==undefined && budget[k].pct!==exp) flag('warn',`中小企業勾選為「${M['中小企業']}」，${k==='p'?'優先':'非優先'}項目應以 ${exp}% 計算，但計畫書採用 ${budget[k].pct}%。`,'中小企業');
+    if(budget[k] && budget[k].pct!==undefined && budget[k].pct!==exp) flag('warn',`中小企業勾選為「${M['中小企業']}」，${lab}項目應以 ${exp}% 計算，但計畫書採用 ${budget[k].pct}%。`,'中小企業');
   }
   const capM = all.match(/上限\s*[^\d\n]{0,15}([\d,.]+)\s*(萬)?/);
   const capVal = capM? Math.round(toNum(capM[1])*(capM[2]?10000:1)) : null;
@@ -533,6 +618,11 @@ function extract(lines, fileName){
     }
   }
 
+  // 執行概要與效益表中若只出現一種優先項目類型，作為類型判斷備援
+  const summaryType = (()=>{ if(iExe<0) return -1; const iEnd=findIdx(lines,/能源使用狀況/,iExe+1); const t=lines.slice(iExe, iEnd>iExe?iEnd:iExe+120).join('').replace(/\s+/g,'');
+    const found=new Set(); [['水側',0],['冰水系統',0],['分級標示1級',0],['一級能效',0],['1級能效',0],['空氣側',1],['壓縮空氣',2],['空壓',2],['熱泵',3],['冷凍',4],['冷藏',4],['PUE',6],['創能',7],['人工智慧',8]].forEach(([k,v])=>{ if(t.includes(k)) found.add(v); });
+    return found.size===1? [...found][0] : -1; })();
+
   // 各欄對應場址
   const P=[], N=[];
   if(energy){
@@ -561,7 +651,8 @@ function extract(lines, fileName){
         it['改善系統套數']=1;
         let ty=classifyType(energy.colText[q]); let how='表頭';
         if(ty<0 && prioSectionType>=0){ ty=prioSectionType; how='第貳章'; }
-        if(ty<0 && /冰水主機/.test(energy.colText[q]) && /(一級能效|1級)/.test(flat)){ ty=5; how='全文'; }
+        if(ty<0 && summaryType>=0){ ty=summaryType; how='執行概要／效益表'; }
+        
         it['優先項目類型']= ty>=0? PRIORITY_TYPES[ty] : '';
         if(ty>=0 && how!=='表頭') flag('info',`「${sites[q]}」的優先項目類型由${how}文字判斷為「${PRIORITY_TYPES[ty]}」，請確認。`);
         if(AC_TYPES.includes(ty)) it['是否有含區域泵']= /區域(水)?泵/.test(all)?'是':(/一次側/.test(all)?'否':'');
@@ -583,7 +674,10 @@ function extract(lines, fileName){
       }});
     }
   }
-  if(budget.np && budget.np.total>0 && !N.length){ const it={}; COLS['非優先項目'].forEach(c=>it[c]=''); it['申請用戶']=name; it['優先/非優先']='非優先'; it['改善前耗能量(kLOE)']=0; it['改善後耗能量(kLOE)']=0; N.push(it);
+  const npT = budget.np && budget.np.tables ? budget.np.tables.filter(t=>t.site) : [];
+  if(budget.np && budget.np.total>0 && !N.length && P.length && npT.length && npT.every(t=>P.some(r=>r['改善地點'].includes(t.site)||t.site.includes(r['改善地點'])))){
+    flag('info',`各場址另有非優先經費（${npT.map(t=>t.site+' '+fmt(t.total)).join('、')}），但能源使用狀況表未拆分優先與非優先，耗電數值已併入各場址的優先項目列，未另建非優先列。`);
+  } else if(budget.np && budget.np.total>0 && !N.length){ const it={}; COLS['非優先項目'].forEach(c=>it[c]=''); it['申請用戶']=name; it['優先/非優先']='非優先'; it['改善前耗能量(kLOE)']=0; it['改善後耗能量(kLOE)']=0; N.push(it);
     flag('warn','有非優先預算但無法辨識非優先項目，已新增一筆空白列，請手動填寫。'); }
   if(budget.p && budget.p.total>0 && !P.length) flag('warn','有優先預算但無法辨識優先項目，請手動新增。');
 
@@ -601,7 +695,15 @@ function extract(lines, fileName){
       const v=Math.round(bud.total*direct[i]/dsum); r[key]=v; acc+=v; if(subTotal!=null){ const sv=Math.round(subTotal*direct[i]/dsum); r[subKey]=sv; accS+=sv; } });
     flag('info',`${flagLabel}經費依預算表場址直接費用拆分（${rows.map((r,i)=>r['改善地點']+' '+fmt(direct[i])).join('、')}），設計、管理、稅捐等共同費用按比例分攤。`);
   };
-  allocate(P,'優先項目-專案經費(元)','優先項目-補助經費(元)',budget.p, sub.p!==undefined?sub.p:(M['優先補助總經費（元）']===''?null:M['優先補助總經費（元）']),'優先項目');
+  const pT = budget.p && budget.p.tables ? budget.p.tables.filter(t=>t.site) : [];
+  if(P.length>1 && pT.length>1){
+    const pct = budget.p.pct!==undefined? budget.p.pct : (smeYes?40:30);
+    P.forEach(r=>{ const t=pT.find(x=>x.site.replace(/\s/g,'')===r['改善地點'].replace(/\s/g,'')) || pT.find(x=>r['改善地點'].includes(x.site)||x.site.includes(r['改善地點']));
+      if(t){ r['優先項目-專案經費(元)']=t.total; r['優先項目-補助經費(元)']=Math.round(t.total*pct/100); } });
+    const miss=P.filter(r=>r['優先項目-專案經費(元)']==='');
+    if(miss.length) flag('warn',`找不到「${miss.map(r=>r['改善地點']).join('、')}」的優先預算表，請手動填寫經費。`);
+    else flag('info',`各場址優先經費取自各自的優先預算表（${pT.map(t=>t.site+' '+fmt(t.total)).join('、')}），補助經費依 ${pct}% 計算。`);
+  } else allocate(P,'優先項目-專案經費(元)','優先項目-補助經費(元)',budget.p, sub.p!==undefined?sub.p:(M['優先補助總經費（元）']===''?null:M['優先補助總經費（元）']),'優先項目');
   if(P.some(p=>p['是否有含區域泵'])) flag('info','「是否有含區域泵」依全文是否提及區域泵判斷，請確認。');
   P.forEach(p=>{ if(!p['優先項目類型']) flag('warn',`「${p['改善地點']}」無法判斷優先項目類型，請手動選擇。`); });
   if(P.length) flag('info','容量欄位（改善後容量）無法自動判斷，請依計畫書填寫。');
@@ -736,7 +838,7 @@ function tableHTML(rows,cols,kind){
   const body=rows.map((r,i)=>`<tr><td>${i+1}</td>${cols.map(([k,w])=>{
     const v=r[k]??''; const man=w.includes('manual');
     let inner;
-    if(k==='優先項目類型') inner=`<select data-t="${kind}" data-r="${i}" data-k="${k}"><option value=""></option>${PRIORITY_TYPES.map(o=>`<option ${o===v?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
+    if(k==='優先項目類型') inner=`<select data-t="${kind}" data-r="${i}" data-k="${k}"><option value=""></option>${PRIORITY_GROUPS.map(([g,os])=>`<optgroup label="${esc(g)}">${os.map(o=>`<option ${o===v?'selected':''}>${esc(o)}</option>`).join('')}</optgroup>`).join('')}${v&&!PRIORITY_TYPES.includes(v)?`<option selected>${esc(v)}</option>`:''}</select>`;
     else if(k==='是否有含區域泵') inner=`<select data-t="${kind}" data-r="${i}" data-k="${k}"><option value=""></option>${['是','否'].map(o=>`<option ${o===v?'selected':''}>${o}</option>`).join('')}</select>`;
     else if(k==='改善措施') inner=`<textarea data-t="${kind}" data-r="${i}" data-k="${k}" rows="2">${esc(v)}</textarea>`;
     else inner=`<input data-t="${kind}" data-r="${i}" data-k="${k}" value="${esc(v)}" ${man?'placeholder="不自動產出"':''}>`;
